@@ -10,14 +10,14 @@ datasource db {
 model Product {
   id    Int     @id @default(autoincrement())
   name  String
-  type  String  // "physical" ou "digital" 
+  type  String  // physical | digital
   price Float
 }
 
 model Order {
   id         Int      @id @default(autoincrement())
   customer   String
-  items      String   // Armazenado como JSON string para simplificar o lab
+  items      String   // JSON
   total      Float
   status     String
   createdAt  DateTime @default(now())

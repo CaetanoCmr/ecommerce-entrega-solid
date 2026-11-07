@@ -1,172 +1,116 @@
-# Projeto Legacy - E-commerce Monolítico 
+# E-commerce SOLID — Projeto 2
 
-Este projeto simula um backend de e-commerce com código "legado". Ele funciona, mas possui graves problemas de design que dificultam a manutenção e expansão.
+Este é o e-commerce do Projeto 1 já refatorado (SRP, OCP e LSP). Ele é o ponto de partida deste trabalho.
 
-## Estrutura de Diretórios
-
-* `src/controllers/OrderController.ts`: **O Problema.** Contém toda a lógica de negócio centralizada (validação, frete, pagamento, banco, notificação).
-* `src/lib/logger.ts`: Utilitário de log (Winston - procure mais sobre ele, é muito util em projetos reais).
-* `src/lib/mail.ts`: Configuração do Nodemailer (utilizando Ethereal para testes).
-* `src/app.ts` & `src/server.ts`: Configuração do Express e inicialização do servidor.
-* `prisma/`: Configuração do banco de dados SQLite e script de seed.
-* `prisma/seed.ts`: Popula o banco com dados iniciais.
-
-## Instalação e Configuração
-
-Siga os passos abaixo para preparar o ambiente:
-
-1.  **Instale as dependências:**
-    ```bash
-    npm install
-    ```
-
-2.  **Crie o banco de dados (SQLite) e as tabelas:**
-    ```bash
-    npm run prisma:migrate
-    ```
-
-3.  **Popule o banco com dados de teste (Livro Físico e E-book):**
-    ```bash
-    npm run prisma:seed
-    ```
-
-## Execução
-
-Para rodar a API em modo de desenvolvimento (reinicia ao salvar arquivos):
+## Como rodar
 
 ```bash
+npm install
+cp .env.example .env
+npm run prisma:migrate
+npm run prisma:seed
 npm run dev
 ```
 
-O servidor iniciará em `http://localhost:3000`.
-*Nota: A primeira execução pode demorar alguns segundos para gerar as credenciais de teste do Ethereal Mail.*
+No Windows (PowerShell), troque o `cp` por `copy .env.example .env`.
 
-## Como Testar
+### Modos de execução
 
-Utilize o **cURL** (terminal) ou ferramentas como **Postman/Insomnia** para enviar requisições POST.
+O modo é escolhido pela variável `APP_ENV` no arquivo `.env`. Para trocar de modo, basta mudar essa linha e reiniciar a aplicação.
 
-Você pode utilizar o gitbash para executar os comandos abaixo usando o cURL, ele parece estar funcionando muito bem (mas claro que o melhor seria utilizar Linux).
+| | `APP_ENV=dev` | `APP_ENV=test` |
+|---|---|---|
+| E-mail | `EtherealMailProvider`: envia pelo Ethereal e devolve o link do e-mail em `emailPreview` | `ConsoleMailProvider`: imprime o e-mail no console e devolve `emailPreview: null` |
+| Pedidos | `PrismaOrderRepository`: salva no SQLite | `InMemoryOrderRepository`: guarda num array, que é perdido ao reiniciar |
+| Produtos | `PrismaProductRepository` (SQLite) | `PrismaProductRepository` (SQLite) |
+| Internet | Precisa (Ethereal) | Não precisa |
 
+* **dev** (padrão): `APP_ENV=dev`. Se o `.env` não existir ou o `APP_ENV` estiver vazio, a aplicação também roda neste modo.
+* **test**: `APP_ENV=test`. Funciona sem internet. Os produtos continuam vindo do SQLite local, então o `prisma:migrate` e o `prisma:seed` também são necessários.
 
-### Cenário 1: Compra de Livro Físico (Com Frete)
-O sistema deve calcular R$ 10,00 de frete.
+Toda a escolha do que injetar fica em `src/container/container.ts`.
+
+A API sobe em `http://localhost:3000`. Teste com:
 
 ```bash
 curl -X POST http://localhost:3000/orders \
 -H "Content-Type: application/json" \
 -d '{
-  "customer": "abacaxi123@ethereal.email",
+  "customer": "cliente@ethereal.email",
   "items": [{ "productId": 1, "quantity": 1 }],
   "paymentMethod": "credit_card",
   "paymentDetails": { "cardNumber": "1234567812345678", "cvv": "123" }
 }'
 ```
 
-### Cenário 2: Compra de E-book (Digital)
-Produto digital (ID 2). Observe como o código atual trata isso (gera frete incorreto ou lógica misturada).
+Produto `1` é o livro físico (R$ 100 + R$ 10 de frete), produto `2` é o e-book (R$ 50, sem frete). Formas de pagamento: `credit_card`, `debit_card` e `pix`.
+
+## Estrutura
+
+```
+src/
+├── container/     # types.ts (identificadores) e container.ts (InversifyJS)
+├── domain/        # produtos, pedido e erros de negócio
+├── repositories/  # IOrderRepository, IProductRepository, versões Prisma e InMemoryOrderRepository
+├── providers/     # IMailProvider, EtherealMailProvider e ConsoleMailProvider
+├── payments/      # IPaymentMethod, uma classe por forma de pagamento e o registro
+├── services/      # OrderService e NotificationService
+├── controllers/   # OrderController: só HTTP
+└── app.ts         # pede o OrderController ao container e registra a rota
+```
+
+Os services recebem tudo pelo construtor, e as classes concretas só aparecem no `container.ts`.
+
+---
+
+## Trabalho
+
+Hoje a montagem é feita na mão, com `new`, no `app.ts`. Troque isso por um container de IoC, o **InversifyJS**, e prove que a infraestrutura pode ser trocada sem tocar na regra de negócio.
+
+### 1. Configure o Inversify
 
 ```bash
-curl -X POST http://localhost:3000/orders \
--H "Content-Type: application/json" \
--d '{
-  "customer": "abacate123@ethereal.email",
-  "items": [{ "productId": 2, "quantity": 1 }],
-  "paymentMethod": "credit_card",
-  "paymentDetails": { "cardNumber": "1234567812345678", "cvv": "123" }
-}'
+npm install inversify@7 reflect-metadata
 ```
 
----
+No `tsconfig.json`, em `compilerOptions`: `"experimentalDecorators": true` e `"emitDecoratorMetadata": true`.
+Na primeira linha do `src/server.ts`: `import 'reflect-metadata';`
 
-## Sugestões de Melhoria
+> Use a versão 7. A 8 não compila com este `tsconfig`.
 
-O objetivo deste trabalho é refatorar o `OrderController` aplicando os princípios SOLID. Abaixo estão as sugestões do que deve ser feito:
+### 2. Registre as dependências
 
-### 1. Separação de Responsabilidades (SRP) e Camadas
-O Controller atual mistura regras de negócio com detalhes de infraestrutura.
-* **Infraestrutura de Email:** O `nodemailer` é uma ferramenta externa e não deve estar no meio da regra de negócio.
-    * *Sugestão:* Crie uma interface `IMailProvider` e uma implementação `EtherealMailProvider`.
-    * *Sugestão:* Crie um `NotificationService` (Business) que monta a mensagem e chama o Provider.
-* **Persistência:** O Service não deve conhecer o Prisma diretamente.
-    * *Sugestão:* Crie uma interface `IOrderRepository` (Contrato) e uma implementação `PrismaOrderRepository`.
+* Crie `src/container/types.ts` com um `Symbol` para cada dependência (`TYPES.MailProvider`, `TYPES.OrderRepository`...).
+* Coloque `@injectable()` em toda classe que entra no container.
+* Coloque `@inject(TYPES.X)` em **todo** parâmetro de construtor, inclusive os de classe concreta.
 
-### 2. Extensibilidade de Pagamentos (OCP)
-O sistema deve estar "Aberto para extensão, mas fechado para modificação".
-* **Problema:** Adicionar "Pix" hoje exige mudar `if/else` dentro do código principal.
-* **Solução:** Crie uma interface `IPaymentMethod` com um método `process()`. Crie classes concretas (`CreditCardPayment`, `PixPayment`) que implementam essa interface.
+> O projeto roda com `tsx`, que não gera metadados de tipo. Sem o `@inject` em cada parâmetro, a aplicação cai com `Found unexpected missing metadata`.
 
-### 3. Hierarquia de Produtos (LSP)
-Este é o ponto mais crítico da lógica de negócio.
-* **Problema:** O código verifica `if (product.type === 'physical')` para cobrar frete.
-* **Solução:**
-    1. Crie uma classe abstrata ou interface `Product` com um método `calculateFreight()`.
-    2. Crie classes concretas: `PhysicalProduct` (cobra frete) e `DigitalProduct` (frete zero).
-    3. **Importante:** Crie uma Factory ou Mapper para converter o JSON do banco nessas classes ricas antes de processar o pedido.
+* As formas de pagamento são registradas todas com o mesmo identificador e chegam ao `PaymentMethodRegistry` por `@multiInject(TYPES.PaymentMethod)`.
+* Provider de e-mail e repositórios são singleton (`inSingletonScope()`).
 
----
+### 3. Crie um segundo modo de execução
 
-## Árvore de Arquivos Sugerida (Pós-Refatoração)
+Instale o `dotenv`, importe `dotenv/config` no `server.ts` e copie o `.env.example` para `.env`. O container lê o `APP_ENV` e decide o que injetar:
 
-> **Nota:** Esta estrutura é apenas uma sugestão didática. Você tem liberdade para organizar as pastas de outra forma, desde que os princípios SOLID sejam respeitados.
+| | `APP_ENV=dev` | `APP_ENV=test` |
+|---|---|---|
+| E-mail | `EtherealMailProvider` | `ConsoleMailProvider`, que imprime o e-mail no console |
+| Pedidos | `PrismaOrderRepository` | `InMemoryOrderRepository`, que guarda os pedidos num array |
 
+As duas classes do modo `test` são suas. Nesse modo, a aplicação tem de funcionar **sem internet**.
+### 4. Monte tudo num lugar só
 
-```text
-src/
-├── controllers/
-│   └── OrderController.ts        # (HTTP) Recebe request, chama OrderService, devolve response.
-├── domain/                       # (Core) Regras de Negócio Puras
-│   ├── IProduct.ts               # Interface do Produto
-│   ├── PhysicalProduct.ts        # Regra de frete físico
-│   ├── DigitalProduct.ts         # Regra de frete digital
-│   └── ProductFactory.ts         # Cria o produto correto baseada no dado do banco (veja a dica abaixo).
-├── services/                     # (Aplicação/Orquestração)
-│   ├── OrderService.ts           # Fluxo do pedido (Valida -> Paga -> Salva -> Notifica)
-│   └── NotificationService.ts    # Define O QUE enviar (Assunto, Corpo do email) - Utilize o provider de email.
-├── providers/                    # (Infraestrutura) Implementações de ferramentas externas
-│   ├── IMailProvider.ts          # Contrato (ex: sendMail)
-│   └── EtherealMailProvider.ts   # Implementação usando NODEMAILER.
-├── repositories/                 # (Camada de Dados)
-│   ├── IOrderRepository.ts       # Interface (Abstração - Não sabe que o Prisma existe)
-│   └── PrismaOrderRepository.ts  # Implementação Concreta (Usa o PrismaClient).
-├── payments/                     # (Estratégias)
-│   ├── IPaymentMethod.ts         # Contrato
-│   ├── CreditCardPayment.ts
-│   └── PixPayment.ts
-├── lib/
-│   └── logger.ts                 # Configuração do Winston
-├── app.ts
-└── server.ts
-```
+`src/container/container.ts` passa a ser o **único arquivo** que importa classes concretas e faz `new` de repositório, provider, pagamento, service ou controller. O `app.ts` só pede o `OrderController` ao container e registra a rota.
 
-- *Dica Importante:* No `ProductFactory`, você pode ter um método `createProduct(data: any): Product` que verifica o tipo do produto e retorna a instância correta (`PhysicalProduct` ou `DigitalProduct`). Isso mantém o código do serviço limpo e focado na lógica de negócio. Utilize essa factory no `OrderService` para transformar os dados do banco em objetos antes de calcular o frete. Aqui você pode fazer algo como:
+### Critérios de aceite
 
-A factory pode ser algo assim:
+1. Clonar, instalar, migrar, popular e rodar funcionam sem erro.
+2. Os produtos `1` e `2` dão o total certo nos dois modos.
+3. Trocar de modo exige mudar só o `APP_ENV`.
+4. A escolha do modo acontece só no `container.ts`: nenhum arquivo de `services/` ou `controllers/` lê o `APP_ENV` nem importa Prisma, Nodemailer ou uma implementação de repositório, provider ou pagamento.
+5. Uma seção **"Como rodar"** no seu README explica os dois modos.
 
-```typescript
-// ProductFactory.ts
-import { Product } from './IProduct';
-import { PhysicalProduct } from './PhysicalProduct';
-import { DigitalProduct } from './DigitalProduct';
-export class ProductFactory {
-  static createProduct(data: any): Product {
-    if (data.type === 'physical') {
-      return new PhysicalProduct(data.id, data.name, data.price, data.weight, data.dimensions);
-    } else if (data.type === 'digital') {
-      return new DigitalProduct(data.id, data.name, data.price);
-    }
-    throw new Error('Unknown product type');
-  }
-}
-```
+### Entrega
 
-E aqui vai um exemplo de uso dentro do OrderService:
-
-```typescript
-const product = ProductFactory.createProduct(productDataFromDB);
-const freight = product.calculateFreight();
-```
-
-O que descrevo aqui são sugestões para quem não tem idéia por onde começar. Mas se você ja tem uma idéia, sinta-se livre para implementa-la.
-
-
-
+Pelo git. Informe na caixa de texto do AVA o link do repositório. Ele não pode estar privado: teste antes de entregar.
